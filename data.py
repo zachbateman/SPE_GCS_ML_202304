@@ -2,56 +2,67 @@ import pandas
 from datetime import datetime
 
 
-
-def read_input_data(filename, test_data: bool=False):
+def read_input_data(filename: str) -> pandas.DataFrame:
+    
+    #################################################################################################################
+    # READ AND FORMAT DATA ##########################################################################################
     df = pandas.read_csv(filename)
-    try:
+    
+    try:  # Remove unallowed input parameter
         df = df.drop(columns=['Avg_PLT_CO2InjRate_TPH'])
     except KeyError:
         pass
-    try:
+    try:  # Remove Training rows without target parameter
         df = df.dropna(axis=0, subset='inj_diff')
     except KeyError:
         pass
 
-    date_format = '%d/%m/%Y %H:%M' if not test_data else '%m/%d/%Y %H:%M'
 
-    # Turn text into dates for date column
-    df['SampleTimeUTC'] = df['SampleTimeUTC'].map(lambda text: datetime.strptime(text, date_format))
+    # Turn text into dates for date column. Day/Month in Training data but Month/Day in Test data...
+    try:  # D/M/YYYY
+        df['SampleTimeUTC'] = df['SampleTimeUTC'].map(lambda text: datetime.strptime(text, '%d/%m/%Y %H:%M'))
+    except ValueError: # M/D/YYYY
+        df['SampleTimeUTC'] = df['SampleTimeUTC'].map(lambda text: datetime.strptime(text, '%m/%d/%Y %H:%M'))
+    
+    # Sort all rows from earliest value to latest.
+    # This is critical for calulating "DELTA" features which
+    # assume each row is right after the previous time.
     df = df.sort_values(by='SampleTimeUTC')
 
-    # # Add in rough atmospheric temperature feature per provided paper
-    month_temp = {1: -2, 2: 0, 3: 4, 4: 10, 5: 16, 6: 23, 7: 24, 8: 21, 9: 15, 10: 7, 11: 3, 12: -1}
-    df['MonthlyTemp'] = df['SampleTimeUTC'].map(lambda date: month_temp[date.month])
 
-    # # Add in average monthly precipitation feature per provided paper
-    month_precipation = {1: 44, 2: 50, 3: 67, 4: 97, 5: 109, 6: 110, 7: 98, 8: 93, 9: 73, 10: 83, 11: 87, 12: 65}
-    df['Precipitation'] = df['SampleTimeUTC'].map(lambda date: month_precipation[date.month])
 
-    # Now convert date to a number so can be used in regression
+
+    ####################################################################################################################
+    # ADD ADDITIONAL FEATURES BASED ON CHANGES BETWEEN TIME STEPS ######################################################
+
+    # Now add in "DELTA_..." features for the change in values from the previous hour/reading.
+    # These may be important as the CHANGE in value from one reading to the next
+    # may be more useful than any particular value at one point in time.
+    for column in [col for col in df.columns if col not in ['SampleTimeUTC', 'inj_diff']]:
+        values = [None]  # can't calculate for first row (no previous value) so assign None
+        column_values = df[column].tolist()
+        for i in range(1, len(column_values)):
+            values.append(column_values[i] - column_values[i-1])
+        df[f'DELTA_{column}'] = values
+
+    # Now convert date to a number so it could be used as a regression input
     df['SampleTimeUTC'] = df['SampleTimeUTC'].map(lambda date: (date - datetime(2009, 1, 1)).days)
 
 
-    df['WellborePressureDiff'] = df['Avg_VW1_Z01D7061Ps_psi'] - df['Avg_VW1_Z11D4917Ps_psi']
-    df['WellboreTempDiff'] = df['Avg_VW1_Z01D7061Tp_F'] - df['Avg_VW1_Z11D4917Tp_F']
-        
+
+
+    #####################################################################################################################
+    # CLEAN DATA AS NEEDED ##############################################################################################
+
     # Annulus pressure has outliers... replace rediculous values with None
     df['Avg_VW1_ANPs_psi'].values[df['Avg_VW1_ANPs_psi'] > 10_000] = None
 
     # Lots of zeros in training data... not sure they add value, so try removing
     try:
         df = df[df['inj_diff'] != 0]
-    except KeyError:
+    except KeyError:  # column isn't in testing data
         pass
-
-    # Now add in features for the change in values from the previous hour
-    for col in [col for col in df.columns if col not in ['SampleTimeUTC', 'MonthlyTemp', 'Precipitation', 'inj_diff']]:
-        values = [None]  # can't calculate for first row so assign None
-        base_values = df[col].tolist()
-        for i in range(1, len(base_values)):
-            values.append(base_values[i] - base_values[i-1])
-        df[f'DELTA_{col}'] = values
-
+    
     # Have many zero readings for temp and pressure, but these readings should never be zero...
     # Replace with None which then gets assigned median value in regression
     data = df.to_dict('records')
@@ -67,11 +78,14 @@ def read_input_data(filename, test_data: bool=False):
         cleaned_data.append(new_row)
     df = pandas.DataFrame(cleaned_data)
 
+    # There seem to be a few huge outliers for inj_diff in training data.
+    # Remove these as do not want regression model to attempt to capture
+    # these points and potentially mess up the fit on the vast majority of points.
     try:
         CUTOFF = 3000
-        # outliers = df[(df['inj_diff'] < -CUTOFF) | (df['inj_diff'] > CUTOFF)]
         df = df[(df['inj_diff'] < CUTOFF) & (df['inj_diff'] > -CUTOFF)]
     except KeyError:
         pass
-    
+
+
     return df
