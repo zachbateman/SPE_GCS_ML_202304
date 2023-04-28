@@ -54,10 +54,10 @@ def read_input_data(filename: str) -> pandas.DataFrame:
     #####################################################################################################################
     # CLEAN DATA AS NEEDED ##############################################################################################
 
-    # Annulus pressure has outliers... replace rediculous values with None
+    # Annulus pressure has outliers... replace ridiculous values with None (will get replaced by median)
     df['Avg_VW1_ANPs_psi'].values[df['Avg_VW1_ANPs_psi'] > 10_000] = None
 
-    # Lots of zeros in training data... not sure they add value, so try removing
+    # Lots of zeros in training data target... not sure they add value, so try removing
     try:
         df = df[df['inj_diff'] != 0]
     except KeyError:  # column isn't in testing data
@@ -84,7 +84,7 @@ def read_input_data(filename: str) -> pandas.DataFrame:
     try:
         CUTOFF = 3000
         df = df[(df['inj_diff'] < CUTOFF) & (df['inj_diff'] > -CUTOFF)]
-    except KeyError:
+    except KeyError:  # column isn't in testing data
         pass
 
 

@@ -2,7 +2,7 @@ import evogression
 import data
 
 
-df = data.read_input_data('illinois_basing_train.csv')
+df = data.read_input_data('illinois_basin_train.csv')
 
 # Sample the data to cut down on time needed to run analysis.
 # This should still be a sufficiently large sample to get representative feature usefulness.
